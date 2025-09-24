@@ -24,11 +24,11 @@ Your application is not the Form - it participates in the Form.
 
 This specification is organized into focused documents:
 
-1. **[Database Specification](./eidos_database.md)** - Schema design, relationships, migrations
-2. **[UI Specification](./eidos_ui.md)** - Frontend patterns, CRUD pages, navigation, theming
-3. **[Engine Specification](./eidos_engine.md)** - Async processing, business logic, job handling
-4. **[API Specification](./eidos_api.md)** - External interfaces, OAuth2, rate limiting
-5. **[Foundations Specification](./eidos_foundations.md)** - Testing, observability, security, configuration
+1. **[Database Specification](./database.md)** - Schema design, relationships, migrations
+2. **[UI Specification](./ui.md)** - Frontend patterns, CRUD pages, navigation, theming
+3. **[Engine Specification](./engine.md)** - Async processing, business logic, job handling
+4. **[API Specification](./api.md)** - External interfaces, OAuth2, rate limiting
+5. **[Foundations Specification](./foundations.md)** - Testing, observability, security, configuration
 
 ## Core Philosophy
 
@@ -92,4 +92,4 @@ This specification is organized into focused documents:
 
 ## Next Steps
 
-Begin with the [Database Specification](./eidos_database.md) to understand the data foundation, then proceed to the [UI Specification](./eidos_ui.md) for implementation details.
+Begin with the [Database Specification](./database.md) to understand the data foundation, then proceed to the [UI Specification](./ui.md) for implementation details.
