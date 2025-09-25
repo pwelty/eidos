@@ -10,16 +10,16 @@
 - **Security-First:** OAuth2, rate limiting, and audit logging by default
 - **Developer-Friendly:** Comprehensive docs, SDKs, and sandbox environment
 
-## 2) Technology Stack
+## 2) Technology Approach
 
-- **Framework Options:**
-  - Next.js API Routes (if co-located with UI)
-  - FastAPI (Python - if sharing models with Engine)
-  - Express/Fastify (Node.js - for lightweight service)
-- **Documentation:** OpenAPI 3.0 spec, auto-generated
-- **Authentication:** OAuth2 with JWT tokens
-- **Rate Limiting:** Redis-based token bucket
-- **Validation:** JSON Schema validation
+- **Framework:** RESTful API framework with OpenAPI support
+- **Documentation:** Auto-generated from code annotations
+- **Authentication:** OAuth2 with JWT tokens or API keys
+- **Rate Limiting:** Token bucket or sliding window algorithm
+- **Validation:** Schema-based request/response validation
+- **Storage:** Database with connection pooling and caching
+
+> See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations.
 
 ## 3) Architecture
 
@@ -597,41 +597,26 @@ paths:
 
 ### 13.3) Schema Generation
 
-```python
-from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
-
-app = FastAPI()
-
-def custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-        
-    openapi_schema = get_openapi(
-        title="Example API",
-        version="1.0.0",
-        description="REST API for Example Application",
-        routes=app.routes,
-    )
-    
-    # Add custom security schemes
-    openapi_schema["components"]["securitySchemes"] = {
-        "bearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT"
-        },
-        "apiKey": {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-API-Key"
-        }
-    }
-    
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-app.openapi = custom_openapi
+```yaml
+# Example OpenAPI configuration
+openapi: 3.0.0
+info:
+  title: Example API
+  version: 1.0.0
+  description: REST API for Example Application
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+security:
+  - bearerAuth: []
+  - apiKey: []
 ```
 
 ## 14) SDK Generation
@@ -668,28 +653,34 @@ export class ExampleAPI {
 
 ### 14.2) Python SDK
 
-```python
-# Generated from OpenAPI spec
-class ExampleAPI:
-    def __init__(self, api_key: str, base_url: str = None):
-        self.base_url = base_url or "https://api.example.com/v1"
-        self.session = requests.Session()
-        self.session.headers.update({
-            "X-API-Key": api_key,
-            "Content-Type": "application/json"
-        })
-    
-    def list_projects(
-        self,
-        status: Optional[str] = None,
-        limit: int = 20
-    ) -> ProjectList:
-        response = self.session.get(
-            f"{self.base_url}/projects",
-            params={"status": status, "limit": limit}
-        )
-        response.raise_for_status()
-        return ProjectList(**response.json())
+```javascript
+// Generated SDK example
+class ExampleAPI {
+  constructor(apiKey, baseUrl = 'https://api.example.com/v1') {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.headers = {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  async listProjects({ status, limit = 20 } = {}) {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    params.append('limit', limit.toString());
+
+    const response = await fetch(`${this.baseUrl}/projects?${params}`, {
+      headers: this.headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+}
 ```
 
 ## 15) Testing

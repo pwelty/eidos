@@ -10,14 +10,16 @@
 - **Progressive disclosure:** Show summary in lists, full details on dedicated pages
 - **Responsive & accessible:** Mobile-first, keyboard navigable, screen reader friendly
 
-## 2) Technology Stack
+## 2) Technology Approach
 
-- **Framework:** Next.js (App Router)
-- **Styling:** Tailwind CSS
-- **Components:** shadcn/ui (optional) or custom component library
-- **State:** Minimal client state, server-centric
-- **Data fetching:** Server Components + Server Actions (or tRPC)
-- **Realtime:** Supabase Realtime for live updates
+- **Framework:** Modern component-based frontend framework
+- **Styling:** Utility-first CSS framework or component styling system
+- **Components:** Design system with consistent, reusable components
+- **State:** Minimal client state, server-centric data management
+- **Data fetching:** Server-side rendering with optimistic updates
+- **Realtime:** WebSocket or server-sent events for live updates
+
+> See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations.
 
 ## 3) App Shell & Navigation
 
@@ -429,13 +431,13 @@ Live preview showing all components:
 - Interaction to Next Paint: < 200ms
 
 ### 8.2) Techniques
-- Server-side rendering (Next.js)
-- Code splitting per route
+- Server-side rendering with hydration
+- Code splitting per route and component
 - Lazy loading for below-fold content
 - Image optimization and responsive images
 - Font subsetting and preloading
 - HTTP/2 and compression
-- Edge caching for static assets
+- CDN and edge caching for static assets
 - Database query optimization
 - Virtual scrolling for long lists
 - Debounced search and filters
@@ -446,9 +448,9 @@ Live preview showing all components:
 
 ### 9.1) Server State
 - Source of truth is always the database
-- Use Server Components for initial render
-- Server Actions for mutations
-- Revalidate data after mutations
+- Use server-side rendering for initial page load
+- Server-side mutations with proper invalidation
+- Revalidate cached data after mutations
 
 ### 9.2) Client State
 - Minimal, only for UI concerns:
@@ -456,11 +458,11 @@ Live preview showing all components:
   - Selected items for bulk actions
   - Temporary form state
   - UI preferences (sidebar collapsed)
-- Use React state/context
+- Use framework's built-in state management
 - Persist preferences to localStorage
 
 ### 9.3) Realtime Updates
-- Subscribe to Supabase Realtime for:
+- Subscribe to realtime events for:
   - Other users' changes
   - Async job status updates
   - Notifications

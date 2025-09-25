@@ -4,7 +4,7 @@
 
 **Eidos App** defines the Form of the Application - the perfect, eternal pattern that all database-driven applications participate in. Just as Plato argued that all earthly chairs are imperfect copies of the Form of Chair, all applications are instances of this Form.
 
-This specification provides the complete blueprint for database-driven applications, independent of any particular technology stack or platform. Whether implemented as a web app, mobile app, or desktop application - whether built with Next.js, Rails, Django, or any future framework - the Form remains constant.
+This specification provides the complete blueprint for database-driven applications, independent of any particular technology stack or platform. Whether implemented as a web app, mobile app, or desktop application - whether built with modern frontend frameworks, MVC frameworks, or any future technology - the Form remains constant.
 
 ## The Form Defines:
 - The eternal pattern of CRUD operations
@@ -27,8 +27,9 @@ This specification is organized into focused documents:
 1. **[Database Specification](./database.md)** - Schema design, relationships, migrations
 2. **[UI Specification](./ui.md)** - Frontend patterns, CRUD pages, navigation, theming
 3. **[Engine Specification](./engine.md)** - Async processing, business logic, job handling
-4. **[API Specification](./api.md)** - External interfaces, OAuth2, rate limiting
+4. **[API Specification](./api.md)** - External interfaces, authentication, rate limiting
 5. **[Foundations Specification](./foundations.md)** - Testing, observability, security, configuration
+6. **[Framework Guide](./FRAMEWORKS.md)** - Specific implementation details for popular frameworks
 
 ## Core Philosophy
 
@@ -48,8 +49,8 @@ This specification is organized into focused documents:
                                  │
 ┌─────────────────┐              ▼
 │      UI         │     ┌─────────────────┐     ┌─────────────────┐
-│   (Next.js)     │────▶│    Database     │◀────│     Engine      │
-│                 │◀────│   (Supabase)    │────▶│    (Python)     │
+│   (Frontend)    │────▶│    Database     │◀────│     Engine      │
+│                 │◀────│   (PostgreSQL)  │────▶│   (Workers)     │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
          │                       ▲                        │
          └───────────────────────┴────────────────────────┘
@@ -63,13 +64,15 @@ This specification is organized into focused documents:
 3. Add **Engine Spec** - Implement async business logic as needed
 4. Expose **API Spec** - Add external access if required
 
-## Technology Stack
+## Reference Implementation
 
-- **Database:** Supabase (Postgres + Auth + Storage + Realtime)
-- **UI:** Next.js (App Router) + Tailwind CSS
-- **Engine:** Python (FastAPI + Celery)
-- **API:** Next.js API Routes or separate FastAPI
-- **Observability:** Better Stack (Logs + Uptime)
+See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations. The reference stack includes:
+
+- **Database:** PostgreSQL with authentication and real-time capabilities
+- **UI:** Modern frontend framework with component library
+- **Engine:** Server-side language with async job processing
+- **API:** RESTful endpoints with authentication and rate limiting
+- **Observability:** Logging, monitoring, and alerting infrastructure
 
 ## Implementation Phases
 

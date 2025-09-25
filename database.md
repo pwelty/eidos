@@ -9,6 +9,8 @@
 - **Relationships Matter:** Treat important joins as first-class entities
 - **Everything is Audited:** Who did what, when, and why
 
+> See [Framework Guide](./FRAMEWORKS.md) for database-specific implementation details.
+
 ## 2) Database Design
 
 ### 2.1) Standard Table Structure
@@ -335,87 +337,95 @@ COMMIT;
 
 ### 5.1) N+1 Query Prevention
 
-```python
-# Bad - N+1 queries
-projects = get_projects()
-for project in projects:
-    project.tasks = get_tasks(project.id)  # Query per project
+```javascript
+// Bad - N+1 queries
+const projects = await getProjects();
+for (const project of projects) {
+  project.tasks = await getTasks(project.id); // Query per project
+}
 
-# Good - Eager loading
-projects = (
-    session.query(Project)
-    .options(joinedload(Project.tasks))
-    .all()
-)
+// Good - Eager loading (use your ORM's eager loading)
+const projects = await getProjectsWithTasks();
 
-# Good - Batch loading
-project_ids = [p.id for p in projects]
-tasks = get_tasks_by_project_ids(project_ids)
-tasks_by_project = group_by(tasks, "project_id")
+// Good - Batch loading
+const projectIds = projects.map(p => p.id);
+const tasks = await getTasksByProjectIds(projectIds);
+const tasksByProject = groupBy(tasks, 'projectId');
 ```
 
 ### 5.2) Database Connection Pooling
 
-```python
-from sqlalchemy.pool import NullPool, QueuePool
+```javascript
+// Example connection pool configuration
+const poolConfig = {
+  // Development - minimal pooling
+  development: {
+    min: 2,
+    max: 10,
+    idle: 10000
+  },
 
-# Development - no pooling
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=NullPool
-)
+  // Production - robust pooling
+  production: {
+    min: 5,
+    max: 30,
+    idle: 30000,
+    acquire: 60000,
+    evict: 1000,
+    handleDisconnects: true
+  }
+};
 
-# Production - connection pool
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=20,
-    max_overflow=40,
-    pool_timeout=30,
-    pool_recycle=1800,  # Recycle connections after 30 min
-    pool_pre_ping=True  # Verify connections before use
-)
+const db = createConnection(DATABASE_URL, {
+  pool: poolConfig[process.env.NODE_ENV]
+});
 ```
 
 ### 5.3) Caching Strategy
 
-```python
-from functools import lru_cache
-import redis
+```javascript
+// Memory cache for immutable data
+const userPermissionsCache = new Map();
 
-redis_client = redis.Redis()
+function getUserPermissions(userId) {
+  if (userPermissionsCache.has(userId)) {
+    return userPermissionsCache.get(userId);
+  }
 
-# Memory cache for immutable data
-@lru_cache(maxsize=1000)
-def get_user_permissions(user_id: str) -> List[str]:
-    return fetch_from_db(user_id)
+  const permissions = fetchFromDb(userId);
+  userPermissionsCache.set(userId, permissions);
+  return permissions;
+}
 
-# Redis cache for shared data
-async def get_project_cached(project_id: str) -> Project:
-    # Check cache
-    cached = await redis_client.get(f"project:{project_id}")
-    if cached:
-        return Project.parse_raw(cached)
+// Redis cache for shared data
+async function getProjectCached(projectId) {
+  // Check cache
+  const cached = await redisClient.get(`project:${projectId}`);
+  if (cached) {
+    return JSON.parse(cached);
+  }
 
-    # Fetch from DB
-    project = await get_project_from_db(project_id)
+  // Fetch from DB
+  const project = await getProjectFromDb(projectId);
 
-    # Cache with TTL
-    await redis_client.setex(
-        f"project:{project_id}",
-        3600,  # 1 hour TTL
-        project.json()
-    )
+  // Cache with TTL
+  await redisClient.setex(
+    `project:${projectId}`,
+    3600, // 1 hour TTL
+    JSON.stringify(project)
+  );
 
-    return project
+  return project;
+}
 
-# Cache invalidation
-async def update_project(project_id: str, data: dict):
-    # Update DB
-    await update_project_in_db(project_id, data)
+// Cache invalidation
+async function updateProject(projectId, data) {
+  // Update DB
+  await updateProjectInDb(projectId, data);
 
-    # Invalidate cache
-    await redis_client.delete(f"project:{project_id}")
+  // Invalidate cache
+  await redisClient.del(`project:${projectId}`);
+}
 ```
 
 ## 6) Security Patterns

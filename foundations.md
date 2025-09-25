@@ -11,74 +11,82 @@
 
 ### 2.1) Test Database Setup
 
-```python
-import pytest
-from sqlalchemy import create_engine
-from testcontainers.postgres import PostgresContainer
+```javascript
+// Example test database setup - adapt to your framework
+const testDb = {
+  async setup() {
+    // Use test containers or in-memory database
+    this.container = await new PostgreSQLContainer().start();
+    this.connection = await createConnection(this.container.getConnectionUri());
 
-@pytest.fixture(scope="session")
-def db():
-    with PostgresContainer("postgres:15") as postgres:
-        engine = create_engine(postgres.get_connection_url())
+    // Run migrations
+    await runMigrations(this.connection);
 
-        # Run migrations
-        run_migrations(engine)
+    // Seed test data
+    await seedTestData(this.connection);
 
-        # Seed test data
-        seed_test_data(engine)
+    return this.connection;
+  },
 
-        yield engine
+  async cleanup() {
+    await this.connection?.close();
+    await this.container?.stop();
+  },
 
-@pytest.fixture
-def session(db):
-    connection = db.connect()
-    transaction = connection.begin()
-
-    yield connection
-
-    transaction.rollback()
-    connection.close()
+  async withTransaction(testFn) {
+    const tx = await this.connection.beginTransaction();
+    try {
+      await testFn(tx);
+    } finally {
+      await tx.rollback();
+    }
+  }
+};
 ```
 
 ### 2.2) Database Tests
 
-```python
-def test_soft_delete_cascade():
-    # Create parent and children
-    project = create_project(name="Test Project")
-    task1 = create_task(project_id=project.id)
-    task2 = create_task(project_id=project.id)
+```javascript
+test('soft delete cascade', async () => {
+  // Create parent and children
+  const project = await createProject({ name: 'Test Project' });
+  const task1 = await createTask({ projectId: project.id });
+  const task2 = await createTask({ projectId: project.id });
 
-    # Soft delete parent
-    soft_delete(project)
+  // Soft delete parent
+  await softDelete(project);
 
-    # Verify children are also soft deleted
-    assert task1.deleted_at is not None
-    assert task2.deleted_at is not None
+  // Verify children are also soft deleted
+  const updatedTask1 = await getTask(task1.id);
+  const updatedTask2 = await getTask(task2.id);
+  expect(updatedTask1.deletedAt).toBeTruthy();
+  expect(updatedTask2.deletedAt).toBeTruthy();
+});
 
-def test_unique_constraint():
-    # Create user with email
-    create_user(email="test@example.com")
+test('unique constraint violation', async () => {
+  // Create user with email
+  await createUser({ email: 'test@example.com' });
 
-    # Try to create another with same email
-    with pytest.raises(IntegrityError) as exc:
-        create_user(email="test@example.com")
+  // Try to create another with same email
+  await expect(
+    createUser({ email: 'test@example.com' })
+  ).rejects.toThrow('unique constraint');
+});
 
-    assert "unique constraint" in str(exc.value)
+test('tenant isolation policy', async () => {
+  // Set tenant context
+  setTenantId('tenant_1');
+  const project1 = await createProject({ tenantId: 'tenant_1' });
 
-def test_rls_policy():
-    # Set tenant context
-    set_tenant_id("tenant_1")
-    project1 = create_project(tenant_id="tenant_1")
+  // Switch tenant
+  setTenantId('tenant_2');
+  const project2 = await createProject({ tenantId: 'tenant_2' });
 
-    # Switch tenant
-    set_tenant_id("tenant_2")
-    project2 = create_project(tenant_id="tenant_2")
-
-    # Verify isolation
-    visible_projects = get_visible_projects()
-    assert project1 not in visible_projects
-    assert project2 in visible_projects
+  // Verify isolation
+  const visibleProjects = await getVisibleProjects();
+  expect(visibleProjects).not.toContain(project1);
+  expect(visibleProjects).toContain(project2);
+});
 ```
 
 ### 2.3) Integration Tests
@@ -167,24 +175,42 @@ API Request (trace root)
 ```
 
 **Implementation:**
-```python
-from opentelemetry import trace
+```javascript
+// Example using OpenTelemetry - adapt to your tracing library
+const { trace } = require('@opentelemetry/api');
+const tracer = trace.getTracer('my-service');
 
-tracer = trace.get_tracer(__name__)
+function processRequest(request) {
+  return tracer.startActiveSpan('process_request', (span) => {
+    span.setAttributes({
+      'request.id': request.id,
+      'request.method': request.method
+    });
 
-@tracer.start_as_current_span("process_request")
-def process_request(request):
-    span = trace.get_current_span()
-    span.set_attribute("request.id", request.id)
-    span.set_attribute("request.method", request.method)
+    try {
+      // Nested spans
+      tracer.startActiveSpan('validate', () => {
+        validateRequest(request);
+      });
 
-    with tracer.start_as_current_span("validate"):
-        validate_request(request)
+      const result = tracer.startActiveSpan('database', () => {
+        return queryDatabase(request);
+      });
 
-    with tracer.start_as_current_span("database"):
-        result = query_database(request)
-
-    return result
+      span.setStatus({ code: trace.SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.recordException(error);
+      span.setStatus({
+        code: trace.SpanStatusCode.ERROR,
+        message: error.message
+      });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
 ```
 
 ### 3.3) Metrics

@@ -10,15 +10,17 @@
 - **Idempotent Operations:** Every job can be safely retried
 - **Observable:** Full visibility into job status and history
 
-## 2) Technology Stack
+## 2) Technology Approach
 
-- **Language:** Python 3.11+
-- **Framework:** FastAPI for HTTP endpoints
-- **Worker:** Celery with Redis broker (alternatives: RQ, Arq)
-- **Database Access:** SQLAlchemy or asyncpg
-- **Validation:** Pydantic for data models
-- **Observability:** OpenTelemetry for tracing
-- **Logging:** Structured JSON logging
+- **Language:** Server-side language with async support
+- **Framework:** Web framework for HTTP endpoints
+- **Worker:** Job queue system with message broker
+- **Database Access:** Database ORM or query builder
+- **Validation:** Schema validation library
+- **Observability:** Distributed tracing system
+- **Logging:** Structured logging with correlation IDs
+
+> See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations.
 
 ## 3) Architecture
 
@@ -182,59 +184,53 @@ async def create_command(cmd: CommandCreate) -> Command:
 
 ### 5.1) Task Structure
 
-```python
-from pydantic import BaseModel
-from typing import Any, Dict
-import asyncio
+```javascript
+// Generic task structure - adapt to your language/framework
+class TaskBase {
+  constructor(db, logger, tracer) {
+    this.db = db;
+    this.logger = logger;
+    this.tracer = tracer;
+  }
 
-class TaskBase:
-    """Base class for all tasks"""
-    
-    def __init__(self, db, logger, tracer):
-        self.db = db
-        self.logger = logger
-        self.tracer = tracer
-    
-    async def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Override in subclasses"""
-        raise NotImplementedError
-    
-    async def validate(self, payload: Dict[str, Any]) -> bool:
-        """Validate payload before execution"""
-        return True
-    
-    async def compensate(self, payload: Dict[str, Any], error: Exception):
-        """Compensating action on failure"""
-        pass
+  async execute(payload) {
+    // Override in subclasses
+    throw new Error('Not implemented');
+  }
 
-class CalculateBudgetTask(TaskBase):
-    
-    class Payload(BaseModel):
-        project_id: str
-        include_contingency: bool = False
-        contingency_percent: float = 0.1
-    
-    async def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        # Validate payload
-        data = self.Payload(**payload)
-        
-        # Fetch project data
-        project = await self.db.get_project(data.project_id)
-        
-        # Calculate budget
-        budget = await self.calculate_budget(project, data)
-        
-        # Update project
-        await self.db.update_project(
-            data.project_id,
-            calculated_budget=budget
-        )
-        
-        return {
-            "project_id": data.project_id,
-            "budget": budget,
-            "calculation_date": datetime.utcnow()
-        }
+  async validate(payload) {
+    // Validate payload before execution
+    return true;
+  }
+
+  async compensate(payload, error) {
+    // Compensating action on failure
+  }
+}
+
+class CalculateBudgetTask extends TaskBase {
+  async execute(payload) {
+    // Validate payload
+    const { project_id, include_contingency = false, contingency_percent = 0.1 } = payload;
+
+    // Fetch project data
+    const project = await this.db.getProject(project_id);
+
+    // Calculate budget
+    const budget = await this.calculateBudget(project, { include_contingency, contingency_percent });
+
+    // Update project
+    await this.db.updateProject(project_id, {
+      calculated_budget: budget
+    });
+
+    return {
+      project_id,
+      budget,
+      calculation_date: new Date().toISOString()
+    };
+  }
+}
 ```
 
 ### 5.2) Error Handling
@@ -321,25 +317,22 @@ async def emit_event(event: DomainEvent):
 
 ### 7.1) Periodic Tasks
 
-Using Celery Beat:
+Using your framework's scheduler (cron-like syntax):
 
-```python
-from celery.schedules import crontab
+```yaml
+# Example scheduler configuration
+schedules:
+  generate-daily-reports:
+    task: 'tasks.generate_daily_reports'
+    schedule: '0 2 * * *'  # 2 AM daily
 
-beat_schedule = {
-    'generate-daily-reports': {
-        'task': 'tasks.generate_daily_reports',
-        'schedule': crontab(hour=2, minute=0),  # 2 AM daily
-    },
-    'cleanup-old-commands': {
-        'task': 'tasks.cleanup_old_commands',
-        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Sunday 3 AM
-    },
-    'send-reminder-emails': {
-        'task': 'tasks.send_reminder_emails',
-        'schedule': crontab(hour=9, minute=0),  # 9 AM daily
-    },
-}
+  cleanup-old-commands:
+    task: 'tasks.cleanup_old_commands'
+    schedule: '0 3 * * 0'  # Sunday 3 AM
+
+  send-reminder-emails:
+    task: 'tasks.send_reminder_emails'
+    schedule: '0 9 * * *'  # 9 AM daily
 ```
 
 ### 7.2) Delayed Execution
@@ -365,28 +358,32 @@ async def schedule_delayed_command(
 
 ### 8.1) Authentication
 
-```python
-from jose import jwt
+```javascript
+// Generic security context - adapt to your JWT library
+class SecurityContext {
+  constructor(token) {
+    this.token = token;
+    this.claims = this.decodeJWT(token);
+    this.tenantId = this.claims.tenant_id;
+    this.userId = this.claims.user_id;
+    this.scopes = this.claims.scopes || [];
+  }
 
-class SecurityContext:
-    def __init__(self, token: str):
-        self.token = token
-        self.claims = jwt.decode(
-            token,
-            key=settings.JWT_SECRET,
-            algorithms=["HS256"],
-            audience="engine"
-        )
-        self.tenant_id = self.claims.get("tenant_id")
-        self.user_id = self.claims.get("user_id")
-        self.scopes = self.claims.get("scopes", [])
-    
-    def has_scope(self, scope: str) -> bool:
-        return scope in self.scopes
-    
-    def validate_tenant(self, tenant_id: str):
-        if self.tenant_id != tenant_id:
-            raise PermissionError("Tenant mismatch")
+  hasScope(scope) {
+    return this.scopes.includes(scope);
+  }
+
+  validateTenant(tenantId) {
+    if (this.tenantId !== tenantId) {
+      throw new Error('Tenant mismatch');
+    }
+  }
+
+  decodeJWT(token) {
+    // Use your JWT library to decode and verify
+    return jwt.verify(token, process.env.JWT_SECRET);
+  }
+}
 ```
 
 ### 8.2) Database Access
