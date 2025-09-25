@@ -1,5 +1,9 @@
 # Eidos App
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub issues](https://img.shields.io/github/issues/pwelty/eidos)](https://github.com/pwelty/eidos/issues)
+[![GitHub stars](https://img.shields.io/github/stars/pwelty/eidos)](https://github.com/pwelty/eidos/stargazers)
+
 > *εἶδος (eidos):* The eternal, unchanging Form in Platonic philosophy
 
 **Eidos App** defines the Form of the Application - the perfect, eternal pattern that all database-driven applications participate in. Just as Plato argued that all earthly chairs are imperfect copies of the Form of Chair, all applications are instances of this Form.
@@ -96,3 +100,17 @@ See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations. 
 ## Next Steps
 
 Begin with the [Database Specification](./database.md) to understand the data foundation, then proceed to the [UI Specification](./ui.md) for implementation details.
+
+## Contributing
+
+We welcome contributions to the Eidos specification! Please see our [Contributing Guidelines](./CONTRIBUTING.md) for details on how to get involved.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+## Acknowledgments
+
+- Inspired by Plato's Theory of Forms
+- Built with insights from years of database-driven application development
+- Community contributions and feedback
