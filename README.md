@@ -28,12 +28,13 @@ Your application is not the Form - it participates in the Form.
 
 This specification is organized into focused documents:
 
-1. **[Database Specification](./database.md)** - Schema design, relationships, migrations
+1. **[Database Specification](./database.md)** - Schema design, relationships, migrations, RLS, performance
 2. **[UI Specification](./ui.md)** - Frontend patterns, CRUD pages, navigation, theming
 3. **[Engine Specification](./engine.md)** - Async processing, business logic, job handling
-4. **[API Specification](./api.md)** - External interfaces, authentication, rate limiting
-5. **[Foundations Specification](./foundations.md)** - Testing, observability, security, configuration
-6. **[Framework Guide](./FRAMEWORKS.md)** - Specific implementation details for popular frameworks
+4. **[API Specification](./api.md)** - External interfaces, OAuth2, rate limiting
+5. **[Foundations Specification](./foundations.md)** - Testing, observability, security, error handling
+6. **[Deployment Specification](./deployment.md)** - Railway, Vercel, Supabase setup and gotchas
+7. **[Framework Guide](./FRAMEWORKS.md)** - Specific implementation details for popular frameworks
 
 ## Core Philosophy
 
@@ -70,13 +71,57 @@ This specification is organized into focused documents:
 
 ## Reference Implementation
 
-See [Framework Guide](./FRAMEWORKS.md) for specific technology implementations. The reference stack includes:
+- **Database:** Supabase (Postgres + Auth + Storage + Realtime)
+- **UI:** Next.js (App Router) + Tailwind CSS + shadcn/ui
+- **Engine:** Python (FastAPI + asyncpg, Railway)
+- **API:** Next.js API Routes or separate FastAPI
+- **Observability:** Sentry (errors) + PostHog (analytics)
 
-- **Database:** PostgreSQL with authentication and real-time capabilities
-- **UI:** Modern frontend framework with component library
-- **Engine:** Server-side language with async job processing
-- **API:** RESTful endpoints with authentication and rate limiting
-- **Observability:** Logging, monitoring, and alerting infrastructure
+See [Framework Guide](./FRAMEWORKS.md) for framework-agnostic implementations.
+
+## Project Structure
+
+Standard flat layout — `web/` and `engine/` at root level:
+
+```
+project/
+├── web/                    # Next.js app (App Router)
+│   ├── app/                # Routes, layouts, pages
+│   │   ├── (app)/          # Authenticated routes
+│   │   ├── (auth)/         # Auth routes (login, signup)
+│   │   ├── (marketing)/    # Public pages
+│   │   └── api/            # Route handlers
+│   ├── components/         # Shared UI components
+│   ├── actions/            # Server actions
+│   ├── lib/                # Utilities
+│   │   ├── supabase/       # server.ts, client.ts, admin.ts
+│   │   └── utils.ts        # cn() and other helpers
+│   └── __tests__/          # Vitest unit tests
+├── engine/                 # Python FastAPI background worker
+│   ├── engine/             # Package directory (matches pyproject name)
+│   │   ├── main.py         # FastAPI app + /health endpoint
+│   │   ├── poller.py       # Command poll loop
+│   │   ├── handlers/       # One file per command type
+│   │   └── db.py           # asyncpg pool setup
+│   ├── tests/              # pytest test suite
+│   ├── Dockerfile          # Railway deployment
+│   ├── railway.toml        # builder = "DOCKERFILE", no startCommand
+│   └── pyproject.toml      # hatchling build (explicit packages = ["engine"])
+├── supabase/               # Migrations, seed, RLS policies
+│   └── migrations/         # Numbered SQL files
+├── CLAUDE.md               # AI agent context (stack, commands, conventions)
+├── PRODUCT.md              # Product vision and feature definitions
+└── DECISIONS.md            # Architecture decisions log
+```
+
+**Railway root directory:** `engine` (no leading/trailing slash)
+**Vercel root directory:** `web`
+
+> **GOTCHA:** Railway's Railpack auto-detect fails if the root directory is wrong. Always set `builder = "DOCKERFILE"` in `railway.toml`. Never add `startCommand` — Railway's shell doesn't expand `${PORT}` in toml. Use shell-form `CMD` in the Dockerfile so `$PORT` expands at runtime.
+
+> **GOTCHA:** `vercel link` from the `web/` subdirectory auto-creates a project named `web`. Use `vercel link --yes --project <actual-name>` to target the correct project.
+
+> **GOTCHA (pyproject.toml):** If the project name differs from the package directory (e.g., `my-engine` vs `engine/`), hatchling fails. Add `[tool.hatch.build.targets.wheel] packages = ["engine"]`.
 
 ## Implementation Phases
 

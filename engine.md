@@ -134,24 +134,39 @@ LIMIT 10
 FOR UPDATE SKIP LOCKED;
 ```
 
-3. **Process Command:**
+3. **Claim commands quickly, then process independently:**
+
+> **CRITICAL:** Never hold a database connection/transaction for the duration of a handler. Handlers call external APIs (HTTP, AI, email) which can take minutes. Connection poolers (Supabase Supavisor in transaction mode) will kill long-held connections. Claim in a short transaction, release the connection, then process.
+
 ```python
-async def process_command(command: Command):
+# WRONG: holds connection for entire handler duration (breaks with connection poolers)
+async with pool.acquire() as conn:
+    async with conn.transaction():
+        rows = await conn.fetch("SELECT ... FOR UPDATE SKIP LOCKED LIMIT 10")
+        for row in rows:
+            await process_command(conn, row)  # Minutes-long — pooler kills this
+
+# RIGHT: short claim transaction, then process independently
+claimed = []
+async with pool.acquire() as conn:
+    async with conn.transaction():
+        rows = await conn.fetch("SELECT ... FOR UPDATE SKIP LOCKED LIMIT 10")
+        for row in rows:
+            await conn.execute("UPDATE commands SET status='processing' WHERE id=$1", row['id'])
+            claimed.append(dict(row))
+# Connection released here
+
+for row_dict in claimed:
+    await process_command(row_dict)  # Acquires its own short connections per query
+
+async def process_command(command: dict):
     try:
-        # Update status
-        await update_command_status(command.id, 'processing')
-        
-        # Execute business logic
-        handler = get_handler(command.type)
-        result = await handler.execute(command.payload)
-        
-        # Save result
-        await update_command_result(command.id, 'completed', result)
-        
-        # Emit events
+        handler = get_handler(command['type'])
+        result = await handler.execute(command['payload'])
+        await update_command_result(command['id'], 'completed', result)
         await emit_domain_event(
-            type=f"{command.type}.completed",
-            aggregate_id=command.payload['project_id'],
+            type=f"{command['type']}.completed",
+            aggregate_id=command['payload'].get('project_id'),
             payload=result
         )
     except Exception as e:
@@ -162,17 +177,26 @@ async def process_command(command: Command):
 
 **Strategy:** Use idempotency keys to prevent duplicate processing
 
+> **GOTCHA:** Never use `uuid4()` in an idempotency key — every call generates a unique value, defeating deduplication entirely. Use time-window-based keys so the scheduler can't create duplicate commands within the same period.
+
 ```python
+# WRONG: uuid4() makes every key unique — no deduplication
+idempotency_key = f"schedule:{command_type}:{workspace_id}:{uuid4()}"
+
+# RIGHT: time-window key deduplicates within a window (e.g., hourly)
+window = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+idempotency_key = f"schedule:{command_type}:{workspace_id}:{window}"
+
 async def create_command(cmd: CommandCreate) -> Command:
     # Check for existing command with same idempotency key
     existing = await db.query(
         "SELECT * FROM commands WHERE idempotency_key = $1",
         cmd.idempotency_key
     )
-    
+
     if existing:
         return existing  # Return existing result
-    
+
     # Create new command
     return await db.query(
         "INSERT INTO commands (...) VALUES (...) RETURNING *",
@@ -234,6 +258,31 @@ class CalculateBudgetTask extends TaskBase {
 ```
 
 ### 5.2) Error Handling
+
+> **GOTCHA: Retryable misses must not tombstone.** When a handler fetches external content (scraping, API call) and gets an empty/null result due to a transient error (rate limit, paywall, timeout), do NOT write a null/empty value to the database. Writing null marks the record as permanently processed, blocking all future retries. Return `{"status": "no_content"}` and let the retry mechanism try again later.
+
+```python
+# WRONG: writes null, marks article as permanently unavailable
+async def fetch_content(article_id):
+    content = await scraper.fetch(url)
+    if not content:
+        await db.execute("UPDATE articles SET content = NULL WHERE id = $1", article_id)
+
+# RIGHT: transient miss returns status, does not write
+async def fetch_content(article_id):
+    content = await scraper.fetch(url)
+    if not content:
+        return {"status": "no_content"}  # Caller leaves DB unchanged
+    await db.execute("UPDATE articles SET content = $1 WHERE id = $2", content, article_id)
+    return {"status": "ok"}
+```
+
+Also skip processing entirely for known-unscrapable URLs (PDFs, binary files) — detect by URL pattern *before* calling the external service:
+
+```python
+if url.lower().endswith(".pdf"):
+    return {"status": "skipped_pdf"}
+```
 
 ```python
 class RetryableError(Exception):
@@ -697,7 +746,151 @@ alerts:
     severity: warning
 ```
 
-## 13) Checklist
+## 13) Gotchas
+
+### 13.1) Sync API clients block the event loop
+
+The Anthropic Python SDK's default client (`anthropic.Anthropic`) is synchronous. Calling it from an `async` handler blocks the entire event loop, stalling healthchecks and all concurrent operations.
+
+```python
+# WRONG: blocks event loop
+result = anthropic_client.messages.create(...)
+
+# RIGHT: wrap sync calls in asyncio.to_thread()
+result = await asyncio.to_thread(anthropic_client.messages.create, ...)
+
+# BEST: use the native async client
+client = anthropic.AsyncAnthropic()
+result = await client.messages.create(...)
+```
+
+The same applies to any sync SDK (OpenAI, Stripe, etc.) called from async handlers.
+
+### 13.2) Python operator precedence in inline ternary expressions
+
+Python's `or` has higher precedence than inline `if/else`. This silently produces wrong results:
+
+```python
+# WRONG: evaluates as (A or B) if C else "" — not A or (B if C else "")
+summary = (entry.get("summary") or entry.get("content", [{}])[0].get("value", "") if entry.get("content") else "")
+
+# RIGHT: use explicit conditionals
+if entry.get("content"):
+    summary = entry.get("summary") or entry.get("content", [{}])[0].get("value", "")
+else:
+    summary = ""
+```
+
+Avoid inline ternary expressions when more than two values are involved.
+
+### 13.3) AI batch response matching: use index, not title
+
+When sending batched items to an LLM for scoring/filtering, don't match results back to inputs by title or string. The model may rephrase, truncate, or reorder. Always use positional (index) matching:
+
+```
+Score EVERY post. Return a JSON array with EXACTLY N elements,
+one per post, in the SAME ORDER as listed above. Do not include titles.
+```
+
+Drop the `"title"` field from the required output — it wastes tokens and creates a fragile matching dependency.
+
+### 13.4) Engine doesn't need a public API domain
+
+The engine is a headless background worker — it polls Supabase, processes commands, writes results back. The only inbound HTTP endpoint needed is `/health` for Railway's healthcheck.
+
+Clients (web, mobile) talk directly to Supabase via their platform SDKs. A public engine API domain is only needed if the engine must receive inbound webhooks (Stripe, email). Even then, Supabase Edge Functions can receive webhooks and write to the commands table instead.
+
+### 13.5) Size token budgets by task type
+
+Different generation tasks need very different token budgets. A budget that's fine for filtering (2–3k tokens) will silently truncate a briefing (needs 6–10k+). Truncation produces empty or incomplete output with no error — the handler succeeds but the result is useless.
+
+```python
+TOKEN_BUDGETS = {
+    "filter":   2_000,   # Score/filter a batch of items
+    "classify":  3_000,   # Categorize content
+    "summarize": 4_000,   # Summarize a single article
+    "brief":     8_000,   # Full briefing across multiple sources
+    "report":   12_000,   # Long-form synthesis
+}
+```
+
+Signal to watch for: handler completes with `status=ok` but output has empty sections or fewer items than expected. Always log the actual token usage after generation so you can spot near-ceiling calls in production.
+
+### 13.6) Always complete the pipeline on empty inputs
+
+When a pipeline stage has nothing to process (zero feeds, zero new articles, zero scored items), it must still write its completion record and emit its domain event. Without the completion signal, the frontend either hangs waiting for an update or never gets a "done" indicator.
+
+```python
+async def scan_feeds(workspace_id: str):
+    feeds = await get_feeds(workspace_id)
+    if not feeds:
+        # Still emit completion — frontend is waiting for this
+        await emit_event("scan.completed", {"workspace_id": workspace_id, "new_articles": 0})
+        return {"status": "ok", "new_articles": 0}
+    # ... normal processing
+```
+
+## 14) Pipeline composition
+
+For multi-stage pipelines (scan → fetch → score → brief), each stage is a separate command type. The output of one stage triggers insertion of the next.
+
+### 14.1) Fan-out pattern
+
+A coordinator command (`daily.pipeline`) fans out to per-resource commands. Each resource is claimed independently, so failures in one don't block others.
+
+```
+daily.pipeline
+  └─► scan.feeds           (one per workspace)
+        └─► fetch.articles  (one per new article)
+              └─► score.articles  (one per batch)
+                    └─► generate.brief  (one per workspace)
+```
+
+The coordinator writes the child commands directly to the `commands` table. Children pick up on the next poll cycle.
+
+```python
+async def handle_daily_pipeline(payload: dict):
+    workspace_ids = await get_active_workspace_ids()
+    for ws_id in workspace_ids:
+        window = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        await insert_command(
+            type="scan.feeds",
+            payload={"workspace_id": ws_id},
+            idempotency_key=f"scan:{ws_id}:{window}",
+        )
+    return {"status": "ok", "workspaces_queued": len(workspace_ids)}
+```
+
+### 14.2) Stage dependencies
+
+Each stage must be tolerant of being called when the previous stage hasn't fully completed — either because commands run in parallel or because a retry re-fires. Two rules:
+
+1. **Read only committed data** — never depend on another command's in-flight state
+2. **Write idempotently** — inserting a child command that already exists (same idempotency key) must be a no-op, not an error
+
+### 14.3) Commands table as audit log
+
+Because every stage writes a command row with `started_at`, `completed_at`, `result`, and `error_message`, the commands table is a complete audit log of every pipeline run. This is free introspection — no separate logging needed to answer "what ran, when, and what did it return?"
+
+```sql
+-- What happened in yesterday's pipeline for workspace X?
+SELECT type, status, started_at, completed_at, result, error_message
+FROM commands
+WHERE payload->>'workspace_id' = 'ws_abc'
+  AND created_at >= NOW() - INTERVAL '24 hours'
+ORDER BY created_at;
+```
+
+### 14.4) Separate fetch from score
+
+Keeping "fetch article content" and "score/filter articles" as distinct command types pays off:
+
+- Re-scoring with updated interests doesn't require re-fetching (expensive HTTP calls)
+- Fetch failures don't block scoring of already-fetched articles
+- Token costs for scoring are predictable and batchable independently of fetch latency
+- Scraper bugs can be fixed and articles re-fetched without redoing the scoring logic
+
+## 16) Checklist
 
 ### Core Functionality
 - [ ] Command polling/subscription working

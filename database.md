@@ -453,7 +453,69 @@ stmt = select(User).where(User.email == email)
 result = await session.execute(stmt)
 ```
 
-## 7) Database Checklist
+## 7) Supabase query gotchas
+
+### 7.1) `.single()` fails when multiple rows match
+
+Supabase's `.single()` returns an **error** (not the first row) when the query matches more than one row. This is different from SQL `LIMIT 1`. The error is silent — callers that ignore it get `null` data and may trigger confusing redirect loops.
+
+```typescript
+// WRONG: fails when user has multiple memberships
+const { data: membership } = await supabase
+  .from("memberships").select("workspace_id").eq("user_id", user.id).single()
+
+// RIGHT: deterministic first result
+const { data: membership } = await supabase
+  .from("memberships").select("workspace_id").eq("user_id", user.id)
+  .order("created_at", { ascending: true }).limit(1).single()
+```
+
+Use `.maybeSingle()` when zero-or-one rows are expected — it returns `null` (not an error) when no rows match.
+
+> **Audit all `.single()` calls.** Add `.limit(1)` wherever a user could accumulate multiple rows (memberships, sessions, settings).
+
+### 7.2) PostgREST join syntax fails silently with RLS
+
+Supabase's embedded join syntax (e.g., `select("id, user_profiles(name)")`) fails **silently** when RLS blocks the join target. The query returns rows, but joined fields are `null` — no error returned.
+
+```typescript
+// Silent failure if RLS blocks user_profiles
+const { data: members } = await supabase
+  .from("memberships").select("id, role, user_profiles(name)")
+
+// Fix: fetch separately and merge
+const { data: members } = await supabase.from("memberships").select("id, role, user_id")
+const userIds = (members ?? []).map(m => m.user_id)
+const { data: profiles } = await supabase.from("user_profiles").select("id, name").in("id", userIds)
+const profileMap = new Map(profiles?.map(p => [p.id, p.name]))
+```
+
+Co-member visibility policy (if users need to see each other's profiles):
+```sql
+CREATE POLICY "Workspace co-members can read profiles" ON public.user_profiles
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM memberships m1
+      JOIN memberships m2 ON m1.workspace_id = m2.workspace_id
+      WHERE m1.user_id = auth.uid() AND m2.user_id = user_profiles.id
+    )
+  );
+```
+
+### 7.3) CHECK constraints must be updated when adding enum values
+
+If a column uses a CHECK constraint to limit allowed values, adding a new value requires a migration to drop and recreate the constraint. Inserting the new value without migrating fails with `violates check constraint`.
+
+```sql
+-- Migration: add new_provider to CHECK constraint
+ALTER TABLE integrations DROP CONSTRAINT integrations_provider_check;
+ALTER TABLE integrations ADD CONSTRAINT integrations_provider_check
+  CHECK (provider IN ('bluesky', 'mastodon', 'notion', 'new_provider'));
+```
+
+**Alternative:** Use a foreign key to a `providers` reference table instead of CHECK constraints for extensible enums. Adds a row, no migration needed.
+
+## 8) Database Checklist
 
 - [ ] Schema follows naming conventions
 - [ ] All tables have audit columns

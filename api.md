@@ -107,6 +107,46 @@ class APIKey(BaseModel):
     rate_limit: Optional[int]
 ```
 
+## 4b) Supabase API key gotchas
+
+### 4b.1) API key auth can't use RLS
+
+External integrations (other apps POSTing to your API) authenticate with API keys. These keys are not Supabase auth tokens, so RLS doesn't apply. API routes that validate API keys must use the service role client and enforce scopes manually.
+
+Key format convention: `{app_prefix}_k_{random}` (e.g., `ax_k_...`). Store only the SHA-256 hash — show the plaintext key exactly once at generation time.
+
+```typescript
+// API route — bearer token validation
+const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY!
+const supabase = createClient(SUPABASE_URL, serviceRole)
+const keyHash = crypto.createHash("sha256").update(bearerToken).digest("hex")
+
+const { data: apiKey } = await supabase
+  .from("api_keys")
+  .select("id, workspace_id, scopes")
+  .eq("key_hash", keyHash)
+  .is("revoked_at", null)
+  .single()
+
+if (!apiKey) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+```
+
+> **GOTCHA:** Never use the anon/RLS client to look up API keys — the caller has no Supabase session, so all RLS policies will block the query.
+
+### 4b.2) Hardcode known integration URLs
+
+When integrating with a known external service (especially one you own), hardcode the base URL server-side. Only make URLs configurable when the integration targets user-hosted instances (e.g., self-hosted WordPress).
+
+Asking users to enter an API URL they can't meaningfully verify creates support surface and security risk (SSRF via user-supplied URLs).
+
+```typescript
+// WRONG: asking user for URL they can't verify
+const apiUrl = workspace.integrations.service_api_url
+
+// RIGHT: hardcode known services
+const API_URL = "https://api.myservice.com"
+```
+
 ## 5) Resource Design
 
 ### 5.1) URL Structure

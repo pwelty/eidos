@@ -7,7 +7,95 @@
 - **Testable by Design:** TDD for business logic, comprehensive test coverage
 - **Observable from Day One:** Logging, tracing, and metrics built-in
 
-## 2) Testing Strategies
+## 2) Supabase client types
+
+**This is the single most common source of silent failures.** Three contexts, three factories — using the wrong one silently fails (wrong auth, wrong RLS, cookie mutation errors).
+
+| Context | Factory | Key | Cookies | RLS |
+|---------|---------|-----|---------|-----|
+| Server components / actions | `createServerClient()` | Anon | Yes (read) | Enforced |
+| Browser / client components | `getSupabaseBrowserClient()` | Anon | Yes (read+write) | Enforced |
+| API routes / admin operations | `createAdminClient()` | Service role | No | Bypassed |
+
+```
+lib/supabase/
+  server.ts    — SSR client, needs await cookies(), setAll must silently catch errors
+  client.ts    — browser singleton (one instance, not re-created per call)
+  admin.ts     — service role, server-only, never import in client components
+  middleware.ts — request-scoped, can mutate cookies
+```
+
+```typescript
+// server.ts — must silently catch cookie errors (server components can't set cookies)
+export async function createServerClient() {
+  const cookieStore = await cookies()
+  return createSupabaseServerClient(URL, ANON_KEY, {
+    cookies: {
+      getAll: () => cookieStore.getAll(),
+      setAll: (cookiesToSet) => {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options))
+        } catch { /* silently ignore — server components can't set cookies */ }
+      },
+    },
+  })
+}
+```
+
+> **CRITICAL:** The admin client bypasses RLS entirely. Never use it for user-facing queries. Never import it in client components (the service role key would be exposed).
+
+## 3) Admin interface pattern
+
+### createAdminClient() helper
+
+Admin pages need cross-workspace visibility, which RLS blocks by design. Use the service role client only after verifying admin status with the regular (RLS-enforced) client.
+
+```typescript
+// lib/supabase/admin.ts
+import { createClient } from "@supabase/supabase-js"
+export function createAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  )
+}
+```
+
+### Admin guard via layout.tsx
+
+Gate admin routes with a layout that checks `user_profiles.admin = true`. Return `notFound()` for non-admins — no information leak, looks like a 404.
+
+```typescript
+// app/(app)/admin/layout.tsx
+export default async function AdminLayout({ children }) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) notFound()
+  const { data: profile } = await supabase
+    .from("user_profiles").select("admin").eq("id", user.id).single()
+  if (!profile?.admin) notFound()
+  return <>{children}</>
+}
+```
+
+### Admin server actions must re-verify
+
+Every admin server action must independently verify `admin = true`. The layout guard only runs on page load — server actions can be called directly from any client.
+
+```typescript
+export async function adminOnlyAction() {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: "Not authenticated" }
+  const { data: profile } = await supabase
+    .from("user_profiles").select("admin").eq("id", user.id).single()
+  if (!profile?.admin) return { error: "Forbidden" }
+  // ... admin logic using createAdminClient()
+}
+```
+
+## 4) Testing Strategies
 
 ### 2.1) Test Database Setup
 
@@ -128,7 +216,7 @@ async def test_full_workflow():
     assert result.data["member_count"] == 1
 ```
 
-## 3) Observability
+## 5) Observability
 
 ### 3.1) Logging Standards
 
@@ -263,7 +351,7 @@ async def readiness_check():
     }
 ```
 
-## 4) Security Patterns
+## 6) Security Patterns
 
 ### 4.1) Authentication & Session Management
 
@@ -316,7 +404,7 @@ class CreateProjectInput(BaseModel):
         return v
 ```
 
-## 5) Configuration Management
+## 7) Configuration Management
 
 ### 5.1) Environment-Based Config
 
@@ -390,7 +478,64 @@ class FeatureFlags:
         return False
 ```
 
-## 6) Error Handling
+## 8) Error Handling
+
+### 6.0) Supabase-specific: PGRST116 (row not found)
+
+When using Supabase with `.single()`, the `PGRST116` error code means "no rows matched" — a normal, expected state for many queries. Treat it as a domain `NotFound`, not an unexpected DB error. All other error codes are unexpected and warrant Sentry capture + 500 response.
+
+```typescript
+const PGRST116 = "PGRST116" // Row not found (PostgREST)
+
+const { data, error } = await admin
+  .from("webauthn_challenges")
+  .select("id, challenge")
+  .eq("id", challengeId)
+  .single()
+
+if (error) {
+  if (error.code === PGRST116) {
+    return NextResponse.json({ error: "Not found" }, { status: 400 })  // expected
+  }
+  Sentry.captureException(error)
+  return NextResponse.json({ error: "Internal server error" }, { status: 500 })  // unexpected
+}
+```
+
+### 6.0b) Server actions must fail loudly on DB errors
+
+Server actions that query data must never silently return `null` or empty data on DB errors. Silent failures appear as mysterious empty UI states with no user feedback and no server trace.
+
+Pattern: check `res.error` after every Supabase query. If unexpected, capture to Sentry and return a structured `{ error }` so the caller can display it.
+
+```typescript
+const { data: profile, error } = await supabase
+  .from("user_profiles").select("*").eq("id", user.id).single()
+
+if (error) {
+  Sentry.captureException(new Error(`getSettings failed: ${error.message}`), {
+    extra: { userId: user.id, code: error.code },
+  })
+  return { error: "Failed to load settings. Please try again.", data: null }
+}
+```
+
+### 6.0c) Admin guard for destructive server actions
+
+Any server action that performs an irreversible operation (delete account, bulk delete, data mutation with no undo) must check whether an admin is currently impersonating a user. Without this guard, an admin could accidentally execute the action against a real user's account.
+
+Detection: the impersonated user object carries a `_realAdminId` property on the server that is absent for real users.
+
+```typescript
+const user = await getUser()
+if (!user) return { error: "Not authenticated" }
+
+if ("_realAdminId" in user) {
+  return { error: "Stop impersonating before performing account actions." }
+}
+```
+
+UI-level hiding (not rendering the button) is insufficient — server actions can be called directly. The layout guard (admin layout returning 404 for non-admins) is also insufficient — it only runs on page load.
 
 ### 6.1) Error Hierarchy
 
@@ -458,7 +603,7 @@ async def call_external_service(data):
         raise
 ```
 
-## 7) Checklists
+## 9) Checklists
 
 ### Security Checklist
 - [ ] Input validation on all endpoints

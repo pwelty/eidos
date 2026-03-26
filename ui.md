@@ -69,10 +69,24 @@
 ### 3.3) Responsive Behavior
 - **Desktop (>1024px):** Full layout with both sidebars
 - **Tablet (768-1024px):** Left sidebar collapses to icons
-- **Mobile (<768px):** 
+- **Mobile (<768px):**
   - Left sidebar becomes hamburger menu
   - Right sidebar stacks below content
   - Top bar simplifies to logo + menu + user
+
+> **GOTCHA: Keep mobile nav in sync with desktop nav.** When desktop and mobile use separate nav structures (common when building a hamburger menu separately from a sidebar), new routes added to the desktop nav are routinely missed in the mobile nav. Users on mobile have no way to discover those features.
+>
+> Prevention: export the nav groups as a named constant shared by both nav components. Add a test that asserts every known route appears in the constant — it catches drift at commit time.
+>
+> ```typescript
+> export const NAV_GROUPS = [
+>   { label: "Sources", items: [
+>     { href: "/feeds", label: "RSS" },
+>     { href: "/websites", label: "Websites" },  // easy to miss when added later
+>   ]},
+> ]
+> // Both desktop sidebar and mobile hamburger import NAV_GROUPS
+> ```
 
 ## 4) Page Types
 
@@ -493,7 +507,175 @@ Live preview showing all components:
 - Cross-browser testing
 - Mobile responsive testing
 
-## 11) Checklist
+## 11) Next.js App Router gotchas
+
+### 11.1) useSearchParams requires Suspense
+
+Any component using `useSearchParams()` fails static generation unless wrapped in a `<Suspense>` boundary. The error is cryptic.
+
+```tsx
+export default function Page() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <PageInner />
+    </Suspense>
+  )
+}
+function PageInner() {
+  const searchParams = useSearchParams()
+  // ...
+}
+```
+
+Wrap all auth pages (reset-password, email confirmation, OAuth callback) in Suspense by default.
+
+### 11.2) Layout + page duplicate queries — use React.cache()
+
+In App Router, layout and page render independently. Both often need user/auth data, producing duplicate DB queries. Use React's `cache()` to deduplicate within the same render pass:
+
+```tsx
+import { cache } from "react"
+
+export const getUser = cache(async () => {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+})
+// Layout and page both call getUser() — React deduplicates automatically
+```
+
+### 11.3) Parallelize server component queries with Promise.all
+
+Server components execute `await` sequentially by default — each query is a waterfall. Independent queries must be parallelized explicitly:
+
+```tsx
+// Before: ~600ms (sequential)
+const user = await getUser()
+const membership = await getMembership(user.id)
+const profile = await getProfile(user.id)
+
+// After: ~200ms (parallel)
+const user = await getUser()
+const [membership, profile] = await Promise.all([
+  getMembership(user.id),
+  getProfile(user.id),
+])
+```
+
+### 11.4) Middleware matcher: be specific
+
+Overly broad middleware matchers cause infinite redirect loops and unexpected behavior on static routes:
+
+```tsx
+// Dangerous — catches everything including _next/static, favicons, API routes
+matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+
+// Better — enumerate only the paths that need auth protection
+matcher: ["/dashboard", "/settings/:path*", "/admin/:path*"]
+```
+
+### 11.5) Skeleton loading colors
+
+Don't use your accent color for skeleton loading states. Accent colors flash visibly during loading transitions and look like a bug.
+
+```tsx
+// Looks broken — accent color flashes
+<Skeleton className="bg-accent" />
+
+// Correct
+<Skeleton className="bg-muted" />
+```
+
+### 11.6) Don't use client context for server data
+
+Fetching server data via React context + useEffect adds an extra round-trip, causes a loading flash on every page, and usually benefits nothing. Use Server Components and `React.cache()` instead.
+
+```tsx
+// WRONG: WorkspaceProvider fetches workspace data client-side via useEffect
+// Every page has an extra DB query + loading flash
+
+// RIGHT: Server components fetch what they need, cached via React.cache()
+const workspace = await getWorkspace(workspaceId)
+```
+
+### 11.7) Hydration mismatches from Math.random()
+
+`Math.random()` generates different values on server vs client, causing React hydration mismatches. Use `useId()` for any component that needs a stable unique ID:
+
+```tsx
+"use client"
+import { useId } from "react"
+
+function Component() {
+  const id = `input-${useId()}`  // Stable, SSR-safe
+}
+```
+
+### 11.8) Inline forms over separate pages for integrations
+
+Don't create a separate `/integrations/new` page. Expand credential forms inline on the list page when the user clicks "Connect." This avoids redirect chains and keeps context visible.
+
+Pattern: config array defines fields per integration type. Cards expand/collapse with `useState`. Connected integrations show status badges, "Test" and "Disconnect" actions.
+
+### 11.9) Standard page title convention
+
+Sentence case, em dash, app name:
+
+```tsx
+export const metadata = { title: "Settings — Appname" }
+export const metadata = { title: "Admin — Appname" }
+// Not: "SETTINGS — APPNAME" or "settings | appname"
+```
+
+### 11.10) Impression tracking for content feeds
+
+Tracking which items a user has actually read (vs. scrolled past) is deceptively tricky. Three common failure modes:
+
+1. **Firing on scroll-into-view** counts items the user never stopped at
+2. **Firing on click** misses items read inline without navigation
+3. **Double-counting** when the component remounts (tab switch, route revalidation)
+
+**Recommended pattern:** Use `IntersectionObserver` with a minimum dwell time (500–1000ms), deduplicated per session via a `Set`:
+
+```tsx
+"use client"
+import { useEffect, useRef } from "react"
+
+const seen = new Set<string>()  // Module-level — persists across remounts
+
+export function ArticleCard({ article }: { article: Article }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!ref.current || seen.has(article.id)) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return
+        // Require 500ms dwell before recording
+        const timer = setTimeout(async () => {
+          if (seen.has(article.id)) return
+          seen.add(article.id)
+          await recordImpression(article.id)
+        }, 500)
+        return () => clearTimeout(timer)
+      },
+      { threshold: 0.5 }  // At least 50% visible
+    )
+
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [article.id])
+
+  return <div ref={ref}>...</div>
+}
+```
+
+The `seen` Set is module-level (not component state), so it survives remounts. Server action `recordImpression` should be idempotent — use `INSERT ... ON CONFLICT DO NOTHING`.
+
+> **GOTCHA:** Don't use component-local state for the seen set — it resets on every remount, causing double-counts when the feed re-renders after revalidation.
+
+## 12) Checklist
 
 ### Per Entity
 - [ ] Index page with search, filter, sort, pagination
