@@ -147,6 +147,59 @@ const apiUrl = workspace.integrations.service_api_url
 const API_URL = "https://api.myservice.com"
 ```
 
+### 4b.3) Scope enforcement on API key routes
+
+Fetching an API key from the DB is not the same as authorizing the request. API keys are issued with specific scopes — always check them before proceeding.
+
+**Pattern:** A `requireScope()` helper that JWT callers bypass (empty scopes = all access), and API key callers are checked against:
+
+```typescript
+// lib/api-auth.ts
+export interface AuthContext {
+  user: { id: string; email?: string }
+  workspaceId: string
+  supabase: SupabaseClient
+  scopes: string[]  // [] = JWT auth (all access), [...] = API key scopes
+}
+
+export function requireScope(auth: AuthContext, scope: string): NextResponse | null {
+  if (auth.scopes.length === 0) return null  // JWT = all scopes allowed
+  if (auth.scopes.includes(scope)) return null
+  return NextResponse.json(
+    { error: `API key missing required scope: ${scope}`, code: "FORBIDDEN_SCOPE" },
+    { status: 403 },
+  )
+}
+
+// Route handler
+export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request)
+  if (auth instanceof NextResponse) return auth
+
+  const scopeError = requireScope(auth, "profile:read")
+  if (scopeError) return scopeError
+
+  // ... handler logic
+}
+```
+
+> **Scope convention:** `resource:action` (e.g., `profile:read`, `workspace:write`, `content:create`). Keep the list in a constants file so routes and the key issuance UI stay in sync.
+
+### 4b.4) Never accept credentials in query strings
+
+Webhook endpoints that accept API keys via `?token=` leak credentials into server access logs, CDN/proxy logs, browser history, and referrer headers. Always require `Authorization: Bearer <token>`. Reject query-string tokens at the extraction layer — don't even validate them.
+
+```typescript
+// WRONG: accepts token from query string
+const token = request.headers.get("authorization")?.slice(7)
+  ?? request.nextUrl.searchParams.get("token")
+
+// RIGHT: header only
+const authHeader = request.headers.get("authorization")
+const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null
+if (!token) return NextResponse.json({ error: "Use Authorization: Bearer header" }, { status: 401 })
+```
+
 ## 5) Resource Design
 
 ### 5.1) URL Structure

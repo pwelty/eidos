@@ -428,6 +428,41 @@ async function updateProject(projectId, data) {
 }
 ```
 
+## 5b) Start flat — avoid JSONB blobs for structured fields
+
+It's tempting to use a JSONB `stage_data` or `metadata` column to store per-stage or per-entity structured data. Don't. Flat columns are:
+
+- Queryable without JSON path syntax
+- Indexable
+- Selectable by name (less data transferred)
+- Visible in DB introspection tools and migrations
+- Obvious to future developers
+
+**The migration tax is steep.** Moving from `stage_data->'outline'->>'content'` to a flat `outline text` column requires:
+1. Adding the new columns
+2. Backfilling all existing rows
+3. Dual-writing in every handler during transition
+4. Removing read fallbacks once confirmed
+5. Removing write fallbacks
+
+That's 4–5 PRs and weeks of risk. If you know the shape of the data up front, just use columns.
+
+```sql
+-- WRONG: storing structured fields in JSONB blob
+ALTER TABLE contents ADD COLUMN stage_data jsonb;
+-- later: stage_data -> 'outline' -> 'content', stage_data -> 'draft' -> 'text', ...
+
+-- RIGHT: flat columns from the start
+ALTER TABLE contents
+  ADD COLUMN outline text,
+  ADD COLUMN script text,
+  ADD COLUMN interview_qa jsonb,  -- JSONB is fine for truly schemaless arrays
+  ADD COLUMN draft text,
+  ADD COLUMN intro text;
+```
+
+> **Rule of thumb:** JSONB is appropriate for truly schemaless data (user preferences, webhook payloads, arbitrary metadata). If you can name the fields today, use columns.
+
 ## 6) Security Patterns
 
 ### 6.1) SQL Injection Prevention

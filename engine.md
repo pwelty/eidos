@@ -748,6 +748,36 @@ alerts:
 
 ## 13) Gotchas
 
+### 13.0) Audit notifications when collapsing pipeline stages
+
+When you auto-approve or hide a pipeline stage (e.g., because users don't need to interact with it), the notification for that stage must also be removed. Handlers that fire `notify_user(stage="outline")` don't know or care whether the stage is visible — they fire regardless.
+
+The result: users get an email for a stage they'll never see, with a CTA to review something that has already been automatically processed.
+
+**Checklist when collapsing a stage:**
+- [ ] Set `auto_approve: true` in the content type config
+- [ ] Remove `notify_content_ready(stage_name="<collapsed_stage>")` from the handler
+- [ ] Verify the *next user-visible stage* still fires its notification
+- [ ] Search for any other places that reference the stage name as a string
+
+> **Pattern:** Notifications belong at the boundary where the user is expected to take action. Auto-approved stages have no such boundary.
+
+### 13.0b) Stage/status aliases are sharp edges
+
+When a pipeline stage is deprecated or auto-approved, you'll be tempted to leave "transition aliases" in the codebase — mappings from the old name to the new column. Don't. These aliases catch on things:
+
+- A new developer (or AI agent) adds code for `stage === "outline"` because it's in the mapping
+- A test fixture uses the old stage name
+- A notification silently fires for the hidden stage
+
+Remove them immediately when the stage is collapsed. The DB column can stay (it has real data), but the *routing code* that treats `"outline"` as a valid stage name should be gone.
+
+```typescript
+// REMOVE these as soon as outline/script become auto-approved:
+if (stageName === "outline" && fieldKey === "content") return "outline"  // ← sharp edge
+if (stageName === "script" && fieldKey === "content") return "script"    // ← sharp edge
+```
+
 ### 13.1) Sync API clients block the event loop
 
 The Anthropic Python SDK's default client (`anthropic.Anthropic`) is synchronous. Calling it from an `async` handler blocks the entire event loop, stalling healthchecks and all concurrent operations.

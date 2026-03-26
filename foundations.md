@@ -95,6 +95,33 @@ export async function adminOnlyAction() {
 }
 ```
 
+## 3b) Multi-tenant workspace isolation with service-role clients
+
+When using a service-role Supabase client (which bypasses RLS), you must enforce workspace isolation manually in every query. RLS is your safety net for normal user sessions — but it does nothing for service-role. Without explicit filtering, any valid request can read or modify any workspace's data.
+
+**Thread `workspaceId` through every helper — even internal ones:**
+
+```typescript
+// WRONG: filters by id only — any workspace can read any content
+async function fetchContent(supabase: Supabase, contentId: string) {
+  return supabase.from("contents").select("*").eq("id", contentId).single()
+}
+
+// RIGHT: always add workspace_id constraint
+async function fetchContent(supabase: Supabase, contentId: string, workspaceId: string) {
+  return supabase
+    .from("contents")
+    .select("*")
+    .eq("id", contentId)
+    .eq("workspace_id", workspaceId)
+    .single()
+}
+```
+
+This applies to **every** DB helper — fetch, update, delete — regardless of how "internal" it feels. The workspace constraint is what makes cross-workspace data leakage impossible even if a bug in the caller passes the wrong ID.
+
+> **Pattern:** Every public-facing pipeline function signature should be `(supabase, entityId, workspaceId, ...rest)`. If a function doesn't take `workspaceId`, that's a red flag.
+
 ## 4) Testing Strategies
 
 ### 2.1) Test Database Setup
@@ -215,6 +242,34 @@ async def test_full_workflow():
     assert result.data["task_count"] == 1
     assert result.data["member_count"] == 1
 ```
+
+### 2.4) Node native test runner for TypeScript helpers
+
+For pure logic tests (no DOM, no framework), skip Jest/Vitest. Node's built-in `node:test` + `--experimental-strip-types` is zero-config and fast.
+
+**Pattern:** `.mjs` test files with explicit `.ts` extension imports.
+
+```javascript
+// web/lib/__tests__/my-helper.test.mjs
+import assert from "node:assert/strict"
+import test from "node:test"
+import { myHelper } from "../my-helper.ts"  // explicit .ts extension required
+
+test("description", () => {
+  assert.equal(myHelper("input"), "expected")
+})
+
+test("async case", async () => {
+  await assert.rejects(() => myHelper(null), /error message/)
+})
+```
+
+Run with:
+```bash
+node --experimental-strip-types --test lib/__tests__/my-helper.test.mjs
+```
+
+> **Why `.mjs`?** TypeScript compiler ignores `.mjs` files, so you don't need `allowImportingTsExtensions` in tsconfig. The `.ts` extension in the import tells Node to strip types at load time.
 
 ## 5) Observability
 
