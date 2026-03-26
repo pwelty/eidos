@@ -1,0 +1,10 @@
+[build]
+builder = "DOCKERFILE"
+# DO NOT add startCommand here — Railway doesn't expand $PORT in toml.
+# The Dockerfile CMD handles the start command with proper shell expansion.
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
