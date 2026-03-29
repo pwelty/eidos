@@ -90,8 +90,8 @@ ENVIRONMENT=development
 - Site URL: `https://your-domain.com`
 - Redirect URLs: `https://your-domain.com/**` and `http://localhost:3001/**`
 
-## npm install gotcha
-`@sentry/nextjs@^8` does not declare `next@^16` as a peer dep yet. Run `npm install --legacy-peer-deps` until Sentry ships a compatible release. This applies to both fresh installs and CI — add `--legacy-peer-deps` to your CI install step or set `legacy-peer-deps=true` in `.npmrc`.
+## Sentry version
+Use `@sentry/nextjs@^10` (not `^8`) for Next.js 16 compatibility. v8 had a peer dep conflict requiring `--legacy-peer-deps`. v10 resolves this — no `.npmrc` workaround needed.
 
 ## New project setup checklist
 

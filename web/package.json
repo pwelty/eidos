@@ -11,7 +11,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@sentry/nextjs": "^8",
+    "@sentry/nextjs": "^10",
     "@supabase/ssr": "^0.6",
     "@supabase/supabase-js": "^2",
     "@vercel/analytics": "^1",
