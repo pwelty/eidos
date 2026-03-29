@@ -36,5 +36,14 @@ export const getUserWorkspace = cache(async () => {
     .order("created_at", { ascending: true })
     .limit(1)
     .single();
-  return data;
+  if (!data) return null;
+  // Supabase types embedded joins as arrays — normalize to a single object.
+  const ws = Array.isArray(data.workspaces)
+    ? data.workspaces[0]
+    : data.workspaces;
+  return { ...data, workspaces: ws ?? null } as {
+    workspace_id: string;
+    role: string;
+    workspaces: { id: string; name: string; slug: string } | null;
+  };
 });
