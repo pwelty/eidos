@@ -90,13 +90,18 @@ ENVIRONMENT=development
 - Site URL: `https://your-domain.com`
 - Redirect URLs: `https://your-domain.com/**` and `http://localhost:3001/**`
 
+## npm install gotcha
+`@sentry/nextjs@^8` does not declare `next@^16` as a peer dep yet. Run `npm install --legacy-peer-deps` until Sentry ships a compatible release. This applies to both fresh installs and CI — add `--legacy-peer-deps` to your CI install step or set `legacy-peer-deps=true` in `.npmrc`.
+
 ## New project setup checklist
 
-1. `supabase init` + `supabase db push` (run migration)
-2. Vercel: `vercel link --yes --project <name>` from `web/`
-3. Set all env vars on Vercel BEFORE first push
-4. Supabase Dashboard → Authentication → URL Configuration → add domain
-5. Railway: connect GitHub repo, set root directory to `engine`
-6. Set `DATABASE_URL` on Railway (transaction pooler URL from Supabase Dashboard)
-7. Sentry: run `npx @sentry/wizard@latest -i nextjs` from `web/`
-8. shadcn: `npx shadcn@latest init` from `web/`
+1. Create a private GitHub repo: `gh repo create <name> --private --source . --remote origin`
+2. `supabase init` + `supabase db push` (run migration)
+3. `cd web && npm install --legacy-peer-deps` (see npm gotcha above)
+4. Vercel: `vercel link --yes --project <name>` from `web/`
+5. Set all env vars on Vercel BEFORE first push
+6. Supabase Dashboard → Authentication → URL Configuration → add domain
+7. Railway: connect GitHub repo, set root directory to `engine`
+8. Set `DATABASE_URL` on Railway (transaction pooler URL from Supabase Dashboard)
+9. Sentry: run `npx @sentry/wizard@latest -i nextjs` from `web/`
+10. shadcn: `npx shadcn@latest init` from `web/`
